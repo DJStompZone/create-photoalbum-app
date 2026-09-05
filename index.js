@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 /**
- * Creates a sleek, mobile-first, auto-building photo album template with blur-up lazy loading via sharp.
+ * Creates a sleek, mobile-first, auto-building photo album template with blur-up lazy loading and strict CSP.
  * @param {string} targetDirectory The directory where the photo album will be generated.
  * @param {string} title The title of the album.
  * @param {string} description The description of the album.
@@ -63,7 +63,7 @@ const manifestFile = path.join(publicDir, 'site.webmanifest');
 const configFile = path.join(__dirname, 'album.config.json');
 
 /**
- * Scans the images directory, generates low-res placeholders via sharp, and builds the static site.
+ * Scans the images directory, generates low-res placeholders via sharp, and builds the static HTML, manifest, and JS data files.
  * @returns {Promise<void>}
  */
 async function build() {
@@ -86,7 +86,6 @@ async function build() {
 
     console.log(\`Found \${imageFiles.length} photos. Blasting low-res placeholders via sharp...\`);
 
-    // Process images with sharp
     for (const file of imageFiles) {
         const inputPath = path.join(imagesDir, file);
         const destPath = path.join(lowresDir, file);
@@ -96,7 +95,7 @@ async function build() {
                 console.log(\`  -> Processing \${file}\`);
                 await sharp(inputPath)
                     .resize({ width: 20 })
-                    .withMetadata(false) // strip EXIF for tiny size
+                    .withMetadata(false)
                     .jpeg({ quality: 60, force: false })
                     .webp({ quality: 60, force: false })
                     .png({ quality: 60, force: false })
@@ -107,7 +106,6 @@ async function build() {
         }
     }
 
-    // 1. Generate the JS data source
     const jsContent = \`/**
  * Auto-generated photo data. Do not edit manually.
  * Run 'npm run build' to regenerate this file.
@@ -116,7 +114,6 @@ async function build() {
 const albumPhotos = \${JSON.stringify(imageFiles, null, 4)};\`;
     fs.writeFileSync(photosJsFile, jsContent, 'utf8');
 
-    // 2. Read the user configuration
     let config = {
         title: "My Photo Album",
         description: "A sleek, mobile-first photo gallery.",
@@ -142,7 +139,6 @@ const albumPhotos = \${JSON.stringify(imageFiles, null, 4)};\`;
         ? ogImage 
         : \`\${baseUrl}/\${ogImage.startsWith('/') ? ogImage.slice(1) : ogImage}\`;
 
-    // 3. Generate the Web Manifest
     const manifestContent = {
         name: config.title,
         short_name: "Album",
@@ -165,13 +161,14 @@ const albumPhotos = \${JSON.stringify(imageFiles, null, 4)};\`;
         return '    <link rel="preload" as="image" href="images/lowres/' + file + '">';
     }).join('\\n');
 
-    // 4. Generate the HTML file
     const htmlContent = \`<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: https:; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'self';">
+
     <title>\${config.title}</title>
     <meta name="title" content="\${config.title}">
     <meta name="description" content="\${config.description}">
@@ -201,7 +198,7 @@ const albumPhotos = \${JSON.stringify(imageFiles, null, 4)};\`;
 <body>
     <header>
         <h1>\${config.title}</h1>
-        \${config.description ? \`<p style="text-align: center; color: #aaa; margin-top: 0.5rem; max-width: 600px; margin-inline: auto;">\${config.description}</p>\` : ''}
+        \${config.description ? \`<p class="album-desc">\${config.description}</p>\` : ''}
     </header>
     
     <main class="gallery" id="gallery"></main>
@@ -246,6 +243,14 @@ h1 {
     letter-spacing: 2px;
 }
 
+.album-desc {
+    text-align: center;
+    color: #aaa;
+    margin-top: 0.5rem;
+    max-width: 600px;
+    margin-inline: auto;
+}
+
 .gallery {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -268,7 +273,6 @@ h1 {
     transform: scale(1.02);
 }
 
-/* CSS Spinner for the loading phase */
 .gallery-item.loading::before {
     content: "";
     position: absolute;
@@ -280,7 +284,8 @@ h1 {
     border-top-color: #ffffff;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
-    z-index: 0;
+    z-index: 2;
+    filter: drop-shadow(0 0 2px rgba(0,0,0,0.8));
 }
 
 @keyframes spin {
@@ -294,9 +299,8 @@ h1 {
     height: 100%;
     object-fit: cover;
     display: block;
-    /* Setup for blur-up effect */
     filter: blur(15px);
-    transform: scale(1.1); /* Prevents blurred edges from showing background */
+    transform: scale(1.1);
     transition: filter 0.5s ease-out, transform 0.5s ease-out;
 }
 
@@ -348,6 +352,7 @@ h1 {
 
   const scriptJsContent = `/**
  * Renders the photo gallery DOM elements with advanced blur-up lazy loading.
+ * Ensures the loading spinner persists until the high-res image has fully loaded.
  * @returns {void}
  */
 function renderGallery() {
@@ -365,7 +370,7 @@ function renderGallery() {
 
     albumPhotos.forEach((filename, index) => {
         const itemDiv = document.createElement('div');
-        itemDiv.className = 'gallery-item loading'; // Initializes with CSS spinner
+        itemDiv.className = 'gallery-item loading';
         
         const img = document.createElement('img');
         const lowResSrc = \`images/lowres/\${filename}\`;
@@ -380,8 +385,8 @@ function renderGallery() {
             hdImage.src = highResSrc;
             hdImage.onload = () => {
                 img.src = highResSrc;
-                // Double requestAnimationFrame ensures the browser paints the new src 
-                // before we trigger the CSS transition removing the blur
+                itemDiv.classList.remove('loading');
+                
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => {
                         img.classList.add('loaded');
@@ -391,14 +396,11 @@ function renderGallery() {
         };
 
         const handleLowResLoad = () => {
-            itemDiv.classList.remove('loading'); // Kills the spinner
             fetchHighRes();
         };
 
-        // Fire request for low-res placeholder
         img.src = lowResSrc;
 
-        // If the low-res is already in cache and complete, swap immediately
         if (img.complete) {
             handleLowResLoad();
         } else {
