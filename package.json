@@ -1,0 +1,15 @@
+{
+  "name": "create-photoalbum-app",
+  "version": "1.0.0",
+  "description": "Scaffolds a sleek, mobile-first photo album.",
+  "main": "index.js",
+  "bin": {
+    "create-photoalbum-app": "./index.js"
+  },
+  "type": "module",
+  "author": "DJ Stomp <85457381+DJStompZone@users.noreply.github.com>",
+  "license": "MIT",
+  "dependencies": {
+    "sharp": "^0.35.4"
+  }
+}
